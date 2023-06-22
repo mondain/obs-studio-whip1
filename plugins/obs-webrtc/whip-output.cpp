@@ -5,12 +5,12 @@ const char signaling_media_id_valid_char[] = "0123456789"
 					     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 					     "abcdefghijklmnopqrstuvwxyz";
 
-const uint32_t audio_ssrc = 5002;
+const uint32_t audio_ssrc = generate_random_u32();
 const char *audio_mid = "0";
 const uint32_t audio_clockrate = 48000;
 const uint8_t audio_payload_type = 111;
 
-const uint32_t video_ssrc = 5000;
+const uint32_t video_ssrc = generate_random_u32();
 const char *video_mid = "1";
 const uint32_t video_clockrate = 90000;
 const uint8_t video_payload_type = 96;
@@ -54,6 +54,7 @@ bool WHIPOutput::Start()
 
 	if (start_stop_thread.joinable())
 		start_stop_thread.join();
+
 	start_stop_thread = std::thread(&WHIPOutput::StartThread, this);
 
 	return true;
@@ -70,20 +71,30 @@ void WHIPOutput::Stop(bool signal)
 
 void WHIPOutput::Data(struct encoder_packet *packet)
 {
-	if (!packet) {
+	if (packet) {
+		//do_log(LOG_INFO, "Data packet: %d peer connection: %d", packet->type, peer_connection);
+		// don't send media unless our peer is connected
+		if (peer_connection != -1) {
+			size_t bytes_size = packet->size;
+			if (packet->type == OBS_ENCODER_AUDIO) {
+				Send(audio_track, packet->data, bytes_size,
+				     generate_timestamp(packet->dts_usec,
+							audio_clockrate));
+				int64_t duration =
+					packet->dts_usec - last_audio_timestamp;
+				last_audio_timestamp = packet->dts_usec;
+			} else if (packet->type == OBS_ENCODER_VIDEO) {
+				Send(video_track, packet->data, bytes_size,
+				     generate_timestamp(packet->dts_usec,
+							video_clockrate));
+				int64_t duration =
+					packet->dts_usec - last_video_timestamp;
+				last_video_timestamp = packet->dts_usec;
+			}
+		}
+	} else {
 		Stop(false);
 		obs_output_signal_stop(output, OBS_OUTPUT_ENCODE_ERROR);
-		return;
-	}
-
-	if (packet->type == OBS_ENCODER_AUDIO) {
-		int64_t duration = packet->dts_usec - last_audio_timestamp;
-		Send(packet->data, packet->size, duration, audio_track);
-		last_audio_timestamp = packet->dts_usec;
-	} else if (packet->type == OBS_ENCODER_VIDEO) {
-		int64_t duration = packet->dts_usec - last_video_timestamp;
-		Send(packet->data, packet->size, duration, video_track);
-		last_video_timestamp = packet->dts_usec;
 	}
 }
 
@@ -103,12 +114,15 @@ void WHIPOutput::ConfigureAudioTrack(std::string media_stream_id,
 		media_stream_track_id.c_str(),
 	};
 
+	// generate the random starting ts for the audio track
+	uint32_t rtp_audio_timestamp = generate_random_u32();
+
 	rtcPacketizationHandlerInit packetizer_init = {audio_ssrc,
 						       cname.c_str(),
 						       audio_payload_type,
 						       audio_clockrate,
 						       0,
-						       0,
+						       rtp_audio_timestamp,
 						       RTC_NAL_SEPARATOR_LENGTH,
 						       0};
 
@@ -134,15 +148,18 @@ void WHIPOutput::ConfigureVideoTrack(std::string media_stream_id,
 		media_stream_track_id.c_str(),
 	};
 
+	// generate the random starting ts for the video track
+	uint32_t rtp_video_timestamp = generate_random_u32();
+
 	rtcPacketizationHandlerInit packetizer_init = {
 		video_ssrc,
 		cname.c_str(),
 		video_payload_type,
 		video_clockrate,
 		0,
-		0,
+		rtp_video_timestamp,
 		RTC_NAL_SEPARATOR_START_SEQUENCE,
-		0};
+		max_fragment_size};
 
 	video_track = rtcAddTrackEx(peer_connection, &track_init);
 	rtcSetH264PacketizationHandler(video_track, &packetizer_init);
@@ -150,7 +167,11 @@ void WHIPOutput::ConfigureVideoTrack(std::string media_stream_id,
 	rtcChainRtcpNackResponder(video_track, 1000);
 }
 
-bool WHIPOutput::Setup()
+/**
+ * @brief Init before OPTIONS and Setup due to the need of the endpoint url for SendOptions.
+ * 
+ */
+bool WHIPOutput::Init()
 {
 	obs_service_t *service = obs_output_get_service(output);
 	if (!service) {
@@ -164,9 +185,75 @@ bool WHIPOutput::Setup()
 		obs_output_signal_stop(output, OBS_OUTPUT_BAD_PATH);
 		return false;
 	}
+
 	bearer_token = obs_service_get_connect_info(
 		service, OBS_SERVICE_CONNECT_INFO_BEARER_TOKEN);
 
+	// get video extra data as needed
+	obs_encoder_t *video_enc = obs_output_get_video_encoder(output);
+	if (video_enc) {
+		// TODO(paul) add check the ensure this is h264, not all codecs have extra data
+		do_log(LOG_INFO, "Got video encoder");
+		uint8_t *header;
+		size_t size;
+		if (obs_encoder_get_extra_data(video_enc, &header, &size)) {
+			// base64 encode the SPS/PPS data for our offer SDP
+			std::vector<std::vector<uint8_t>> nalus =
+				parse_h264_nals((const char *)header, size);
+			do_log(LOG_DEBUG, "NALU count: %d", nalus.size());
+			for (std::vector<uint8_t> &nalu : nalus) {
+				int naluType = nalu[0] & 0x1F;
+				if (naluType == OBS_NAL_SPS) { // SPS NALU found
+					do_log(LOG_DEBUG, "SPS NALU found!");
+					sprop_parameter_sets =
+						"sprop-parameter-sets=";
+					std::string encoded = b64_encode(
+						reinterpret_cast<const char *>(
+							nalu.data()),
+						nalu.size());
+					do_log(LOG_DEBUG,
+					       "SPS Base64 encoded: %s",
+					       encoded.c_str());
+					sprop_parameter_sets += encoded;
+					sprop_parameter_sets += ",";
+					encoded.clear();
+				} else if (naluType ==
+					   OBS_NAL_PPS) { // PPS NALU found
+					do_log(LOG_DEBUG, "PPS NALU found!");
+					std::string encoded = b64_encode(
+						reinterpret_cast<const char *>(
+							nalu.data()),
+						nalu.size());
+					do_log(LOG_DEBUG,
+					       "PPS Base64 encoded: %s",
+					       encoded.c_str());
+					sprop_parameter_sets += encoded;
+					sprop_parameter_sets += ";";
+					encoded.clear();
+				}
+			}
+			if (sprop_parameter_sets.empty()) {
+				do_log(LOG_DEBUG,
+				       "No h264 critical data available");
+			} else {
+				do_log(LOG_INFO, "Parameter set: %s",
+				       sprop_parameter_sets.c_str());
+			}
+		}
+		bfree(header);
+	}
+
+	return true;
+}
+
+/**
+ * @brief Set up the PeerConnection and media tracks.
+ * 
+ * @return true 
+ * @return false 
+ */
+bool WHIPOutput::Setup()
+{
 	rtcConfiguration config;
 	memset(&config, 0, sizeof(config));
 
@@ -249,6 +336,7 @@ bool WHIPOutput::Connect()
 
 	std::string read_buffer;
 	std::string location_header;
+
 	char offer_sdp[4096] = {0};
 	rtcGetLocalDescription(peer_connection, offer_sdp, sizeof(offer_sdp));
 
@@ -260,8 +348,37 @@ bool WHIPOutput::Connect()
 	curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(c, CURLOPT_URL, endpoint_url.c_str());
 	curl_easy_setopt(c, CURLOPT_POST, 1L);
-	curl_easy_setopt(c, CURLOPT_COPYPOSTFIELDS, offer_sdp);
 	curl_easy_setopt(c, CURLOPT_TIMEOUT, 8L);
+
+	if (sprop_parameter_sets.empty()) {
+		curl_easy_setopt(c, CURLOPT_COPYPOSTFIELDS, offer_sdp);
+	} else {
+		// TODO(paul) add sprops to the h264 media desc in our offer
+		std::string munged_sdp(offer_sdp);
+		// resize to fit what we're adding
+		munged_sdp.resize(munged_sdp.size() +
+				  sprop_parameter_sets.size());
+		// find the non-std group line
+		std::size_t index = munged_sdp.rfind("a=group:LS 0 1");
+		if (index != std::string::npos) {
+			munged_sdp.erase(index, 16);
+		}
+		// find the index where we'll insert
+		index = munged_sdp.rfind("packetization");
+		do_log(LOG_DEBUG, "Index of str: %d", index);
+		if (index != std::string::npos) {
+			munged_sdp.insert(index, sprop_parameter_sets);
+		}
+		// shrink
+		munged_sdp.shrink_to_fit();
+		// prepend the search prop string
+		do_log(LOG_INFO, "Munged offer: %s", munged_sdp.c_str());
+		// use munged offer sdp version
+		curl_easy_setopt(c, CURLOPT_COPYPOSTFIELDS, munged_sdp.c_str());
+		// clean ups
+		sprop_parameter_sets.clear();
+		munged_sdp.clear();
+	}
 
 	auto cleanup = [&]() {
 		curl_easy_cleanup(c);
@@ -323,23 +440,6 @@ bool WHIPOutput::Connect()
 	return true;
 }
 
-void WHIPOutput::StartThread()
-{
-	if (!Setup())
-		return;
-
-	if (!Connect()) {
-		rtcDeletePeerConnection(peer_connection);
-		peer_connection = -1;
-		audio_track = -1;
-		video_track = -1;
-		return;
-	}
-
-	obs_output_begin_data_capture(output, 0);
-	running = true;
-}
-
 void WHIPOutput::SendDelete()
 {
 	if (resource_url.empty()) {
@@ -392,6 +492,26 @@ void WHIPOutput::SendDelete()
 	cleanup();
 }
 
+void WHIPOutput::StartThread()
+{
+	if (!Init())
+		return;
+
+	if (!Setup())
+		return;
+
+	if (!Connect()) {
+		rtcDeletePeerConnection(peer_connection);
+		peer_connection = -1;
+		audio_track = -1;
+		video_track = -1;
+		return;
+	}
+
+	obs_output_begin_data_capture(output, 0);
+	running = true;
+}
+
 void WHIPOutput::StopThread(bool signal)
 {
 	if (peer_connection != -1) {
@@ -421,26 +541,16 @@ void WHIPOutput::StopThread(bool signal)
 	last_video_timestamp = 0;
 }
 
-void WHIPOutput::Send(void *data, uintptr_t size, uint64_t duration, int track)
+void WHIPOutput::Send(int track, void *data, uintptr_t size, uint32_t ts)
 {
-	if (!running)
-		return;
-
-	// sample time is in us, we need to convert it to seconds
-	auto elapsed_seconds = double(duration) / (1000.0 * 1000.0);
-
-	// get elapsed time in clock rate
-	uint32_t elapsed_timestamp = 0;
-	rtcTransformSecondsToTimestamp(track, elapsed_seconds,
-				       &elapsed_timestamp);
-
-	// set new timestamp
 	uint32_t current_timestamp = 0;
 	rtcGetCurrentTrackTimestamp(track, &current_timestamp);
+	// set new timestamp
 	rtcSetTrackRtpTimestamp(track, current_timestamp + elapsed_timestamp);
 
-	total_bytes_sent += size;
 	rtcSendMessage(track, reinterpret_cast<const char *>(data), (int)size);
+	// update total after send completes
+	total_bytes_sent += size;
 }
 
 void register_whip_output()
