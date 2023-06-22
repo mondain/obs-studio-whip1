@@ -146,7 +146,8 @@ static size_t curl_headerfunction(char *data, size_t size, size_t nmemb,
  * 
  * @return uint32_t 
  */
-static uint32_t generate_random_u32() {
+static uint32_t generate_random_u32()
+{
 	std::random_device rd;
 	std::mt19937 gen(rd());
 	std::uniform_int_distribution<uint32_t> dist(0, UINT32_MAX);
@@ -160,7 +161,8 @@ static uint32_t generate_random_u32() {
  * @param clock_rate
  * @return uint32_t 
  */
-static uint32_t generate_timestamp(uint64_t dts, uint32_t clock_rate) {
+static uint32_t generate_timestamp(uint64_t dts, uint32_t clock_rate)
+{
 	// convert microseconds dts into milliseconds
 	uint32_t dts_ms = static_cast<uint32_t>(dts / 1000);
 	// calculate the timestamp using the media clock rate
@@ -179,42 +181,46 @@ static uint32_t generate_timestamp(uint64_t dts, uint32_t clock_rate) {
  * @param length 
  * @return std::vector<std::vector<uint8_t>> 
  */
-static std::vector<std::vector<uint8_t>> parse_h264_nals(const char* data, size_t length) {
-    std::vector<std::vector<uint8_t>> nalus;
+static std::vector<std::vector<uint8_t>> parse_h264_nals(const char *data,
+							 size_t length)
+{
+	std::vector<std::vector<uint8_t>> nalus;
 
-    const char* end = data + length;
-    const char* start = data;
-    const char* current = data;
+	const char *end = data + length;
+	const char *start = data;
+	const char *current = data;
 
-    while (current < end) {
-        // Find the start code prefix (0x000001 or 0x00000001)
-        if (current[0] == 0x00 && current[1] == 0x00 && (current[2] == 0x01 || (current[2] == 0x00 && current[3] == 0x01))) {
-            if (start < current) {
-                // Extract the NALU unit
-                size_t nalSize = current - start;
-                nalus.emplace_back(start, start + nalSize);
-            }
+	while (current < end) {
+		// Find the start code prefix (0x000001 or 0x00000001)
+		if (current[0] == 0x00 && current[1] == 0x00 &&
+		    (current[2] == 0x01 ||
+		     (current[2] == 0x00 && current[3] == 0x01))) {
+			if (start < current) {
+				// Extract the NALU unit
+				size_t nalSize = current - start;
+				nalus.emplace_back(start, start + nalSize);
+			}
 
-            // Move the start pointer to the next NALU
-            start = current + 3;
-            if (current[2] == 0x00)
-                start++;
+			// Move the start pointer to the next NALU
+			start = current + 3;
+			if (current[2] == 0x00)
+				start++;
 
-            // Skip the start code prefix
-            current += 3;
-            if (current[0] == 0x00)
-                current++;
-        } else {
-            current++;
-        }
-    }
+			// Skip the start code prefix
+			current += 3;
+			if (current[0] == 0x00)
+				current++;
+		} else {
+			current++;
+		}
+	}
 
-    // Extract the last NALU unit
-    size_t nalSize = current - start;
-    if (nalSize > 0)
-        nalus.emplace_back(start, start + nalSize);
+	// Extract the last NALU unit
+	size_t nalSize = current - start;
+	if (nalSize > 0)
+		nalus.emplace_back(start, start + nalSize);
 
-    return nalus;
+	return nalus;
 }
 
 /*
@@ -244,12 +250,12 @@ René Nyffenegger rene.nyffenegger@adp-gmbh.ch
 
 */
 
-static const std::string base64_chars =
-"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-"abcdefghijklmnopqrstuvwxyz"
-"0123456789+/";
+static const std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+					"abcdefghijklmnopqrstuvwxyz"
+					"0123456789+/";
 
-static std::string b64_encode(const char *bytes_to_encode, size_t in_len) {
+static std::string b64_encode(const char *bytes_to_encode, size_t in_len)
+{
 	std::string ret;
 	int i = 0;
 	int j = 0;
@@ -260,11 +266,13 @@ static std::string b64_encode(const char *bytes_to_encode, size_t in_len) {
 		char_array_3[i++] = *(bytes_to_encode++);
 		if (i == 3) {
 			char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-			char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-			char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+			char_array_4[1] = ((char_array_3[0] & 0x03) << 4) +
+					  ((char_array_3[1] & 0xf0) >> 4);
+			char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) +
+					  ((char_array_3[2] & 0xc0) >> 6);
 			char_array_4[3] = char_array_3[2] & 0x3f;
 
-			for (i = 0; (i <4); i++)
+			for (i = 0; (i < 4); i++)
 				ret += base64_chars[char_array_4[i]];
 			i = 0;
 		}
@@ -275,8 +283,10 @@ static std::string b64_encode(const char *bytes_to_encode, size_t in_len) {
 			char_array_3[j] = '\0';
 
 		char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-		char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-		char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+		char_array_4[1] = ((char_array_3[0] & 0x03) << 4) +
+				  ((char_array_3[1] & 0xf0) >> 4);
+		char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) +
+				  ((char_array_3[2] & 0xc0) >> 6);
 		char_array_4[3] = char_array_3[2] & 0x3f;
 
 		for (j = 0; (j < i + 1); j++)
@@ -284,7 +294,6 @@ static std::string b64_encode(const char *bytes_to_encode, size_t in_len) {
 
 		while ((i++ < 3))
 			ret += '=';
-
 	}
 
 	return ret;
