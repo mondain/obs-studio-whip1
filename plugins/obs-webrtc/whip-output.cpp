@@ -80,15 +80,11 @@ void WHIPOutput::Data(struct encoder_packet *packet)
 				Send(audio_track, packet->data, bytes_size,
 				     generate_timestamp(packet->dts_usec,
 							audio_clockrate));
-				int64_t duration =
-					packet->dts_usec - last_audio_timestamp;
 				last_audio_timestamp = packet->dts_usec;
 			} else if (packet->type == OBS_ENCODER_VIDEO) {
 				Send(video_track, packet->data, bytes_size,
 				     generate_timestamp(packet->dts_usec,
 							video_clockrate));
-				int64_t duration =
-					packet->dts_usec - last_video_timestamp;
 				last_video_timestamp = packet->dts_usec;
 			}
 		}
@@ -200,7 +196,7 @@ bool WHIPOutput::Init()
 			// base64 encode the SPS/PPS data for our offer SDP
 			std::vector<std::vector<uint8_t>> nalus =
 				parse_h264_nals((const char *)header, size);
-			do_log(LOG_DEBUG, "NALU count: %d", nalus.size());
+			//do_log(LOG_DEBUG, "NALU count: %d", nalus.size());
 			for (std::vector<uint8_t> &nalu : nalus) {
 				int naluType = nalu[0] & 0x1F;
 				if (naluType == OBS_NAL_SPS) { // SPS NALU found
@@ -365,7 +361,6 @@ bool WHIPOutput::Connect()
 		}
 		// find the index where we'll insert
 		index = munged_sdp.rfind("packetization");
-		do_log(LOG_DEBUG, "Index of str: %d", index);
 		if (index != std::string::npos) {
 			munged_sdp.insert(index, sprop_parameter_sets);
 		}
@@ -546,8 +541,8 @@ void WHIPOutput::Send(int track, void *data, uintptr_t size, uint32_t ts)
 	uint32_t current_timestamp = 0;
 	rtcGetCurrentTrackTimestamp(track, &current_timestamp);
 	// set new timestamp
-	rtcSetTrackRtpTimestamp(track, current_timestamp + elapsed_timestamp);
-
+	rtcSetTrackRtpTimestamp(track, current_timestamp + ts);
+    // send the track data
 	rtcSendMessage(track, reinterpret_cast<const char *>(data), (int)size);
 	// update total after send completes
 	total_bytes_sent += size;
