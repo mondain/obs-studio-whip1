@@ -38,6 +38,7 @@ ipch/
 GeneratedFiles/
 .moc/
 /UI/obs.rc
+*.code-workspace
 .vscode/
 /CI/include/*.lock.json
 install_temp/
