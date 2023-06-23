@@ -137,7 +137,9 @@ void WHIPOutput::ConfigureAudioTrack(std::string media_stream_id,
 	audio_track = rtcAddTrackEx(peer_connection, &track_init);
 	rtcSetOpusPacketizationHandler(audio_track, &packetizer_init);
 	rtcChainRtcpSrReporter(audio_track);
-	rtcChainRtcpNackResponder(audio_track, 1000);
+	// XXX(paul) audio nack support is not signaled and as such should not
+	// create a responder
+	//rtcChainRtcpNackResponder(audio_track, 1000);
 }
 
 void WHIPOutput::ConfigureVideoTrack(std::string media_stream_id,
@@ -364,10 +366,18 @@ bool WHIPOutput::Connect()
 		// resize to fit what we're adding
 		munged_sdp.resize(munged_sdp.size() +
 				  sprop_parameter_sets.size());
-		// find the non-std group line
+		// XXX(paul) locate Lip Sync group attribute and remove it as
+		// it may conflict with parsers expecting only BUNDLE
+		// See RFC-5888 pg 4 and RFC-8843 & RFC-9143 sec 1.2
 		std::size_t index = munged_sdp.rfind("a=group:LS 0 1");
 		if (index != std::string::npos) {
 			munged_sdp.erase(index, 16);
+		}
+		// XXX(paul) libdatachannel does not support PLI signaling
+		// thus it should not be signaled in the offer
+		index = munged_sdp.rfind("a=rtcp-fb:96 nack pli");
+		if (index != std::string::npos) {
+			munged_sdp.erase(index, 23);
 		}
 		// find the index where we'll insert
 		index = munged_sdp.rfind("packetization");
