@@ -66,9 +66,9 @@ private:
 	* @param track 
 	* @param data 
 	* @param size 
-	* @param ts timestamp in milliseconds
+	* @param ts elapsed timestamp
 	*/
-	void Send(int track, void *data, uintptr_t size, uint32_t ts);
+	void Send(int track, void *data, uintptr_t size, uint64_t ts);
 
 	obs_output_t *output;
 
@@ -152,26 +152,6 @@ static uint32_t generate_random_u32()
 	std::mt19937 gen(rd());
 	std::uniform_int_distribution<uint32_t> dist(0, UINT32_MAX);
 	return dist(gen);
-}
-
-/**
- * @brief Generates a timestamp for a given dts value and clock rate.
- * 
- * @param dts
- * @param clock_rate
- * @return uint32_t 
- */
-static uint32_t generate_timestamp(uint64_t dts, uint32_t clock_rate)
-{
-	// convert microseconds dts into milliseconds
-	uint32_t dts_ms = static_cast<uint32_t>(dts / 1000);
-	// calculate the timestamp using the media clock rate
-	uint32_t rtp_timestamp = (dts_ms * 90000) / clock_rate;
-	// ensure that the timestamp is within the valid range
-	if (rtp_timestamp > 0xFFFFFFFF) {
-		rtp_timestamp = rtp_timestamp % 0xFFFFFFFF;
-	}
-	return rtp_timestamp;
 }
 
 /**

@@ -72,20 +72,32 @@ void WHIPOutput::Stop(bool signal)
 void WHIPOutput::Data(struct encoder_packet *packet)
 {
 	if (packet) {
-		//do_log(LOG_INFO, "Data packet: %d peer connection: %d", packet->type, peer_connection);
 		// don't send media unless our peer is connected
 		if (peer_connection != -1) {
-			size_t bytes_size = packet->size;
+			// reduce to milliseconds from microseconds (0 based dts counter)
+			double dts = (packet->dts_usec / 1000.0);
 			if (packet->type == OBS_ENCODER_AUDIO) {
-				Send(audio_track, packet->data, bytes_size,
-				     generate_timestamp(packet->dts_usec,
-							audio_clockrate));
-				last_audio_timestamp = packet->dts_usec;
+				double adj = dts * (audio_clockrate / 1000.0);
+				/*
+				do_log(LOG_INFO,
+				       "Audio: %f dts usec: %u calculated dts: %f",
+				       dts, packet->dts_usec, adj);
+				*/
+				uint64_t ts = static_cast<uint64_t>(floor(adj));
+				Send(audio_track, packet->data, packet->size,
+				     ts);
+				last_audio_timestamp = ts;
 			} else if (packet->type == OBS_ENCODER_VIDEO) {
-				Send(video_track, packet->data, bytes_size,
-				     generate_timestamp(packet->dts_usec,
-							video_clockrate));
-				last_video_timestamp = packet->dts_usec;
+				double adj = dts * (video_clockrate / 1000.0);
+				/*
+				do_log(LOG_INFO,
+				       "Video: %f dts usec: %u calculated dts: %f",
+				       dts, packet->dts_usec, adj);
+				*/
+				uint64_t ts = static_cast<uint64_t>(floor(adj));
+				Send(video_track, packet->data, packet->size,
+				     ts);
+				last_video_timestamp = ts;
 			}
 		}
 	} else {
@@ -236,9 +248,7 @@ bool WHIPOutput::Init()
 				       sprop_parameter_sets.c_str());
 			}
 		}
-		bfree(header);
 	}
-
 	return true;
 }
 
@@ -536,14 +546,23 @@ void WHIPOutput::StopThread(bool signal)
 	last_video_timestamp = 0;
 }
 
-void WHIPOutput::Send(int track, void *data, uintptr_t size, uint32_t ts)
+void WHIPOutput::Send(int track, void *data, uintptr_t size, uint64_t ts)
 {
+	// get the current rtp timestamp for the track
 	uint32_t current_timestamp = 0;
 	rtcGetCurrentTrackTimestamp(track, &current_timestamp);
+	// calculate the timestamp using the media clock rate, plus current
+	uint64_t rtp_timestamp = current_timestamp + ts;
+	// ensure that the timestamp is within the valid range
+	if (rtp_timestamp > 0xFFFFFFFF) {
+		rtp_timestamp = rtp_timestamp % 0xFFFFFFFF;
+	}
+	/*
+	do_log(LOG_INFO, "Send ts: %u calculated rtp ts: %u", ts, rtp_timestamp); */
 	// set new timestamp
-	rtcSetTrackRtpTimestamp(track, current_timestamp + ts);
-    // send the track data
-	rtcSendMessage(track, reinterpret_cast<const char *>(data), (int)size);
+	rtcSetTrackRtpTimestamp(track, static_cast<uint32_t>(rtp_timestamp));
+	// send the track data
+	rtcSendMessage(track, reinterpret_cast<const char *>(data), (int) size);
 	// update total after send completes
 	total_bytes_sent += size;
 }
