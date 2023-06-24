@@ -77,8 +77,8 @@ void WHIPOutput::Data(struct encoder_packet *packet)
 			// reduce to milliseconds from microseconds (0 based dts counter)
 			uint64_t dts_ms = (packet->dts_usec / 1000);
 			if (packet->type == OBS_ENCODER_AUDIO) {
-				uint64_t frame_ts = (
-					dts_ms - last_audio_dts_ms) * 48;
+				uint64_t frame_ts =
+					(dts_ms - last_audio_dts_ms) * 48;
 				/*
 				do_log(LOG_INFO, "Audio: %u frame ts: %u",
 				       dts_ms, frame_ts);
@@ -90,11 +90,11 @@ void WHIPOutput::Data(struct encoder_packet *packet)
 				uint64_t frame_ts =
 					(dts_ms - last_video_dts_ms) * 90;
 				/*
-				do_log(LOG_INFO,
-				       "Video: %u frame ts: %u",
+				do_log(LOG_INFO, "Video: %u frame ts: %u",
 				       dts_ms, frame_ts);
 				*/
-				Send(video_track, packet->data, packet->size, frame_ts);
+				Send(video_track, packet->data, packet->size,
+				     frame_ts);
 				last_video_dts_ms = dts_ms;
 			}
 		}
@@ -565,11 +565,12 @@ void WHIPOutput::Send(int track, void *data, uintptr_t size, uint64_t ts)
 	if (rtp_timestamp > 0xFFFFFFFF) {
 		rtp_timestamp = rtp_timestamp % 0xFFFFFFFF;
 	}
-	do_log(LOG_INFO, "Send ts: %u calculated rtp ts: %u", ts, rtp_timestamp);
+	do_log(LOG_INFO, "Send ts: %u calculated rtp ts: %u", ts,
+	       rtp_timestamp);
 	// set new timestamp
 	rtcSetTrackRtpTimestamp(track, static_cast<uint32_t>(rtp_timestamp));
 	// send the track data
-	rtcSendMessage(track, reinterpret_cast<const char *>(data), (int) size);
+	rtcSendMessage(track, reinterpret_cast<const char *>(data), (int)size);
 	// update total after send completes
 	total_bytes_sent += size;
 }
