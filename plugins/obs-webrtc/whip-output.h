@@ -95,8 +95,8 @@ private:
 	std::atomic<int> connect_time_ms;
 
 	int64_t start_time_ns;
-	int64_t last_audio_timestamp;
-	int64_t last_video_timestamp;
+	int64_t last_audio_dts_ms;
+	int64_t last_video_dts_ms;
 };
 
 void register_whip_output();

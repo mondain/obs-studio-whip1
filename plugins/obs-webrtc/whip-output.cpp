@@ -29,8 +29,8 @@ WHIPOutput::WHIPOutput(obs_data_t *, obs_output_t *output)
 	  total_bytes_sent(0),
 	  connect_time_ms(0),
 	  start_time_ns(0),
-	  last_audio_timestamp(0),
-	  last_video_timestamp(0)
+	  last_audio_dts_ms(0),
+	  last_video_dts_ms(0)
 {
 }
 
@@ -75,29 +75,27 @@ void WHIPOutput::Data(struct encoder_packet *packet)
 		// don't send media unless our peer is connected
 		if (peer_connection != -1) {
 			// reduce to milliseconds from microseconds (0 based dts counter)
-			double dts = (packet->dts_usec / 1000.0);
+			uint64_t dts_ms = (packet->dts_usec / 1000);
 			if (packet->type == OBS_ENCODER_AUDIO) {
-				double adj = dts * (audio_clockrate / 1000.0);
+				uint64_t frame_ts = (
+					dts_ms - last_audio_dts_ms) * 48;
 				/*
-				do_log(LOG_INFO,
-				       "Audio: %f dts usec: %u calculated dts: %f",
-				       dts, packet->dts_usec, adj);
+				do_log(LOG_INFO, "Audio: %u frame ts: %u",
+				       dts_ms, frame_ts);
 				*/
-				uint64_t ts = static_cast<uint64_t>(floor(adj));
 				Send(audio_track, packet->data, packet->size,
-				     ts);
-				last_audio_timestamp = ts;
+				     frame_ts);
+				last_audio_dts_ms = dts_ms;
 			} else if (packet->type == OBS_ENCODER_VIDEO) {
-				double adj = dts * (video_clockrate / 1000.0);
+				uint64_t frame_ts =
+					(dts_ms - last_video_dts_ms) * 90;
 				/*
 				do_log(LOG_INFO,
-				       "Video: %f dts usec: %u calculated dts: %f",
-				       dts, packet->dts_usec, adj);
+				       "Video: %u frame ts: %u",
+				       dts_ms, frame_ts);
 				*/
-				uint64_t ts = static_cast<uint64_t>(floor(adj));
-				Send(video_track, packet->data, packet->size,
-				     ts);
-				last_video_timestamp = ts;
+				Send(video_track, packet->data, packet->size, frame_ts);
+				last_video_dts_ms = dts_ms;
 			}
 		}
 	} else {
@@ -552,8 +550,8 @@ void WHIPOutput::StopThread(bool signal)
 	total_bytes_sent = 0;
 	connect_time_ms = 0;
 	start_time_ns = 0;
-	last_audio_timestamp = 0;
-	last_video_timestamp = 0;
+	last_audio_dts_ms = 0;
+	last_video_dts_ms = 0;
 }
 
 void WHIPOutput::Send(int track, void *data, uintptr_t size, uint64_t ts)
@@ -567,8 +565,7 @@ void WHIPOutput::Send(int track, void *data, uintptr_t size, uint64_t ts)
 	if (rtp_timestamp > 0xFFFFFFFF) {
 		rtp_timestamp = rtp_timestamp % 0xFFFFFFFF;
 	}
-	/*
-	do_log(LOG_INFO, "Send ts: %u calculated rtp ts: %u", ts, rtp_timestamp); */
+	do_log(LOG_INFO, "Send ts: %u calculated rtp ts: %u", ts, rtp_timestamp);
 	// set new timestamp
 	rtcSetTrackRtpTimestamp(track, static_cast<uint32_t>(rtp_timestamp));
 	// send the track data
