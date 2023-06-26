@@ -266,6 +266,8 @@ bool WHIPOutput::Setup()
 	peer_connection = rtcCreatePeerConnection(&config);
 	rtcSetUserPointer(peer_connection, this);
 
+	rtcInitLogger(RTC_LOG_VERBOSE, NULL);
+
 	rtcSetStateChangeCallback(peer_connection, [](int, rtcState state,
 						      void *ptr) {
 		auto whipOutput = static_cast<WHIPOutput *>(ptr);
